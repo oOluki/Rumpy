@@ -1,12 +1,7 @@
-
-enum AtomType {
-    LiteralI64,
-    LiteralF64
-}
-
-
 enum SymbolTypes {
-    SymbolAtom(AtomType)
+    SymbolScalar,
+    SymbolVector(usize),
+    SymbolMatrice(usize, usize),
 }
 
 struct Symbol{
@@ -15,59 +10,120 @@ struct Symbol{
     data: Option<usize>,
 }
 
+// returns the size of the symbol if true or 0 otherwise
+fn is_special_char(input: &char) -> bool{
+    match input {
+        '[' => return true,
+        ']' => return true,
+        '(' => return true,
+        ')' => return true,
+        ',' => return true,
+        '=' => return true,
+        '+' => return true,
+        '-' => return true,
+        '*' => return true,
+        '/' => return true,
+        ':' => return true,
+        _   => return false
+    };
+}
+
+fn tokenize_further<'b, 'a>(output: &mut std::vec::Vec<&'a str>, input: &'b str) where 'b: 'a {
+
+    let mut last_term_pos: usize = 0;
+    let mut i: usize = 0;
+
+    for character in input.chars() {
+
+        if is_special_char(&character) {
+            if last_term_pos < i {
+            output.push(&input[last_term_pos..i]);
+            }
+            output.push(&input[i..i+1]);
+            last_term_pos = i + 1;
+        }
+
+        i += 1;
+    }
+    if last_term_pos < i {
+        output.push(&input[last_term_pos..i]);
+    }
+}
+
+fn tokenize(input: &str) -> std::vec::Vec<&str> {
+    let mut output: std::vec::Vec<&str> = vec![];
+
+    for token in input.split_whitespace() {
+        tokenize_further(&mut output, token);
+    }
+
+    return output;
+}
+
+
 fn get_type_string(input: &SymbolTypes) -> Option<String> {
     return match input {
-        SymbolTypes::SymbolAtom(AtomType::LiteralI64) => Some(String::from("i64")),
-        SymbolTypes::SymbolAtom(AtomType::LiteralF64) => Some(String::from("f64")),
+        SymbolTypes::SymbolScalar => Some(String::from("scal")),
+        SymbolTypes::SymbolVector(dimension) => Some(format!("vec[{dimension}]")),
+        SymbolTypes::SymbolMatrice(lines, columns ) => Some(format!("mat[{lines}][{columns}]"))
         //_ => None
     }
 }
 
 
-fn get_type(input: &str) -> Option<SymbolTypes> {
-
-    return match input {
-        "i64" => Some(SymbolTypes::SymbolAtom(AtomType::LiteralI64)),
-        "f64" => Some(SymbolTypes::SymbolAtom(AtomType::LiteralF64)),
-        _ => None
+fn find_sym<'a>(sym_str: &str, symbol_table: &'a std::vec::Vec<Symbol>) -> Option<&'a Symbol>{
+    for symb in symbol_table {
+        if sym_str == symb.name {
+            return Some(symb);
+        }
     }
+    return None;
 }
 
-fn parse_daclaration(argv: &std::vec::Vec<&str>, data_buffer: &mut std::vec::Vec<f64>) -> Option<Symbol> {
-    if argv.len() < 2 || argv.len() == 3{
+
+fn get_type(tokens: &std::vec::Vec<&str>, offset: usize) -> Option<SymbolTypes> {
+
+    if tokens[offset] == "scal" {
+        return Some(SymbolTypes::SymbolScalar);
+    } else if tokens[offset] == "mat" && tokens.len() - offset == 7{
+        if tokens[offset + 1] != "[" || tokens[offset + 3] != "]"
+        || tokens[offset + 4] != "[" || tokens[offset + 6] != "]" {
+            return None;
+        }
+        let lines = tokens[offset + 2].parse();
+        let column = tokens[offset + 5].parse();
+        if lines.is_ok() && column.is_ok() {
+            return Some(SymbolTypes::SymbolMatrice(lines.expect(""), column.expect("")));
+        }        
+    } else if tokens[offset] == "vec" && tokens.len() - offset == 4{
+        if tokens[offset + 1] != "[" || tokens[offset + 3] != "]" {
+            return None;
+        }
+        let dim = tokens[offset + 2].parse();
+        if dim.is_ok() {
+            return Some(SymbolTypes::SymbolVector(dim.expect("")));
+        }
+    }
+    return None;
+}
+
+fn parse_declaration(statement: &std::vec::Vec<&str>, offset: usize) -> Option<Symbol> {
+    if statement.len() < 2 + offset || statement[offset + 1] != ":"{ 
         return None;
-    } else if argv.len() == 2 {
-        return Some(Symbol {
-            name: argv[1].to_string(),
-            symbol_type: get_type(argv[0]).expect("Expected Identifier"),
-            data: None
-        });
     }
-    let value: f64 = argv[3].parse().expect("Expected Expression");
-    let data_pos = data_buffer.len();
-    data_buffer.push(value);
-    return Some(Symbol {
-        name: argv[1].to_string(),
-        symbol_type: get_type(argv[0]).expect("Expected Identifier"),
-        data: Some(data_pos)
-    });
+    let name = statement[offset];
+    let symb_type = get_type(statement, 2 + offset);
+    
+    if symb_type.is_some() {
+        return Some(Symbol{name: String::from(name), symbol_type: symb_type?, data: None});
+    }
+    return None;
 }
-
 
 fn display_symbol(symbol_str: &str, symbol_table: &std::vec::Vec<Symbol>, data_buffer: &std::vec::Vec<f64>){
 
 
-    let mut symbol_found: Option<&Symbol> = None;
-
-    for symb in symbol_table {
-        if symbol_str == symb.name {
-            symbol_found = Some(symb);
-            break;
-        }
-    }
-
-    let symbol: &Symbol = symbol_found.expect("Symbol Not Found");
-
+    let symbol = find_sym(symbol_str, symbol_table).expect("Symbol Not Found");
     
 
     if Option::is_some(&symbol.data) {
@@ -78,7 +134,7 @@ fn display_symbol(symbol_str: &str, symbol_table: &std::vec::Vec<Symbol>, data_b
         );
     } else {
         println!(
-            "Symbol: {symb_type} {name}",
+            "Symbol: {name}: {symb_type}",
             symb_type=get_type_string(&symbol.symbol_type).expect("Invalid Type"),
             name=symbol.name
         );
@@ -93,7 +149,7 @@ fn main(){
 
     let mut input_buffer = String::new();
 
-    let mut data_buffer: std::vec::Vec<f64> = vec![];
+    let data_buffer: std::vec::Vec<f64> = vec![];
 
     let mut symbols: std::vec::Vec<Symbol> = vec![];
 
@@ -107,23 +163,36 @@ fn main(){
 
         std::io::stdin().read_line(&mut input_buffer).expect("Could Not Read Line");
 
-        let tokens: std::vec::Vec<&str> = input_buffer.split_whitespace().collect();
+        input_buffer = String::from(input_buffer.strip_suffix("\n").unwrap_or(&input_buffer));
 
-        if tokens.len() == 0 || tokens[0] == "close" {
+        let tokens: std::vec::Vec<&str> = tokenize(&input_buffer);
+
+        if tokens.len() == 0 {
+            continue;
+        }
+
+        if tokens[0] == "close" || tokens[0] == "exit" {
             break;
         }
         if tokens[0] == "show" {
-            if tokens.len() == 1 {
-                println!("Expected Symbol");
-                std::process::exit(1);
+            if tokens.len() != 2 {
+                println!("Expected Symbol, Got {} Instead", input_buffer);
+                continue;
             }
             display_symbol(tokens[1], &symbols, &data_buffer);
             continue;
         }
+        if tokens[0] == "let" {
+            let symbol = parse_declaration(&tokens, 1);
+            if symbol.is_some() {
+                symbols.push(symbol.expect(""));
+            } else {
+                println!("Invalid Symbol Declaration {}", input_buffer);
+            }
+            continue;
+        }
 
-        let symbol: Symbol = parse_daclaration(&tokens, &mut data_buffer).expect("Invalid Expression");
-
-        symbols.push(symbol);
+        println!("Invalid Input");       
         
     }
 
